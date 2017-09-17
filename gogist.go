@@ -64,6 +64,8 @@ func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (boo
 		log.Fatal(err)
 	}
 
+	filesUploaded <- 1
+
 	log.Printf("Uploaded: %s (URL: %s) \n", filename, gist.GetHTMLURL())
 
 	return true, nil
@@ -94,6 +96,9 @@ var (
 	dryRun      bool
 	files       string
 	githubToken string
+
+	// Channel buffer for finished file uploads
+	filesUploaded chan int
 )
 
 func init() {
@@ -107,6 +112,8 @@ func init() {
 		errText := fmt.Sprintf("Environment variable required but missing: %s", "GITHUB_API_TOKEN")
 		log.Fatal(errText)
 	}
+
+	filesUploaded = make(chan int)
 }
 
 // Validate user passed arguments
@@ -153,7 +160,19 @@ func getFilesToUpload(files []string) ([]LocalFile, error) {
 // Process files with, unless a dryrun
 func processFiles(ctx context.Context, uploadClient *github.Client, filesToProcess []LocalFile) {
 	for _, file := range filesToProcess {
-		file.Upload(ctx, uploadClient)
+		go file.Upload(ctx, uploadClient)
+	}
+}
+
+// Monitor file upload progress from goroutines
+func checkUploadsFinished(totalUploads int) {
+	uploadedFiles := 0
+	for {
+		if uploadedFiles < totalUploads {
+			uploadedFiles += <-filesUploaded
+		} else {
+			return
+		}
 	}
 }
 
@@ -177,4 +196,6 @@ func main() {
 	client := github.NewClient(tc)
 
 	processFiles(ctx, client, filesToUpload)
+
+	checkUploadsFinished(len(filesToUpload))
 }
