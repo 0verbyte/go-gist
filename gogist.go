@@ -13,9 +13,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// MaxUploadSize limited upload size
-const MaxUploadSize = 1000000 // mb
-
 // LocalFile wraps a filename
 type LocalFile struct {
 	filepath string
@@ -42,12 +39,12 @@ func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (boo
 
 	contents, err := f.GetFileContents()
 	if err != nil {
-		logFatal(err, false)
+		log.Fatal(err)
 	}
 
 	filename, err := f.GetFilename()
 	if err != nil {
-		logFatal(err, false)
+		log.Fatal(err)
 	}
 
 	log.Printf("Uploading %s...", filename)
@@ -64,7 +61,7 @@ func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (boo
 	gist, _, err := uploadClient.Gists.Create(ctx, &gistUpload)
 
 	if err != nil {
-		logFatal(err, false)
+		log.Fatal(err)
 	}
 
 	log.Printf("Uploaded: %s (URL: %s) \n", filename, gist.GetHTMLURL())
@@ -86,7 +83,7 @@ func (f LocalFile) GetFileContents() (string, error) {
 func (f LocalFile) GetFilename() (string, error) {
 	stat, err := os.Stat(f.filepath)
 	if err != nil {
-		logFatal(err, false)
+		log.Fatal(err)
 	}
 
 	return stat.Name(), nil
@@ -108,31 +105,23 @@ func init() {
 	githubToken = os.Getenv("GITHUB_API_TOKEN")
 	if githubToken == "" {
 		errText := fmt.Sprintf("Environment variable required but missing: %s", "GITHUB_API_TOKEN")
-		logFatal(errors.New(errText), false)
+		log.Fatal(errText)
 	}
-}
-
-// Print an error message and exit application with exit status 1
-func logFatal(err error, withUsage bool) {
-	if withUsage {
-		flag.Usage()
-	}
-
-	log.Fatal(err)
 }
 
 // Validate user passed arguments
 func checkForArgumentErrors() {
+	if !upload && !dryRun {
+		flag.Usage()
+		log.Fatal("Nothing to do")
+	}
+
 	if upload && dryRun {
-		logFatal(errors.New("Can't upload and dryrun at the same time"), false)
+		log.Fatal("Can't upload and dryrun at the same time")
 	}
 
 	if upload && flag.NArg() == 0 {
-		logFatal(errors.New("Selected -upload with no files"), false)
-	}
-
-	if !upload && !dryRun {
-		logFatal(errors.New("Nothing to do"), true)
+		log.Fatal("Selected -upload with no files")
 	}
 
 	if dryRun {
@@ -175,7 +164,7 @@ func main() {
 
 	filesToUpload, err := getFilesToUpload(argFiles)
 	if err != nil {
-		logFatal(err, false)
+		log.Fatal(err)
 	}
 
 	// Create GitHub client
