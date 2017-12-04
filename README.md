@@ -4,11 +4,13 @@ Upload local files directly to [GitHub Gist](https://gist.github.com/).
 ## Usage
 Create a [personal API token](https://github.com/settings/tokens) on GitHub. Save the generated token to an environment variable on your machine called `GITHUB_API_TOKEN`.
 
-Once you've cloned this repo, just build it with `go build gogist.go`. This will place a binary in the same directory called `gogist`, that you can run.
+Once you've cloned this repo, run the Makefile (`make`). This will place a binary in the same directory called `gogist`, that you can run.
 
 ```
 % ./gogist -h
 Usage of ./gogist:
+  -allow-large-files
+    	Override max upload size 50KB
   -dryrun
     	Print files that would have been uploaded
   -upload
@@ -21,9 +23,7 @@ Usage of ./gogist:
 % ./gogist -upload <filepath> <filepath>
 ```
 
-`gogist` will log which files have been uploaded and the url to view the file on gist
+`gogist` will log which files have been uploaded and the url to view the file on gist.
+If the file you are uploading is large (check `-h` for exact max upload size), you should use the flag `-allow-large-files`.
 
 _Note: all files are uploaded as secret gists_
-
-## Disclaimer
-This isn't some master piece it's more of an brute force on solving an annoying problem when sharing code. I will probably add new things as I need them, but for now this suites my needs, use at your own will :).

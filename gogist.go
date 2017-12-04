@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 
@@ -13,89 +12,29 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// LocalFile wraps a filename
-type LocalFile struct {
-	filepath string
-}
+// ByteSize wraps sizes
+type ByteSize float64
 
-// Exists checks whether a file exists on the filesystem
-func (f LocalFile) Exists() (bool, error) {
-	_, err := os.Stat(f.filepath)
-
-	if err != nil {
-		return false, err
-	}
-
-	return true, nil
-}
-
-// Upload upload file to GitHub gist servers, unless doing a dryrun. If dryrun
-// is specified files are not uploaded but rather logged as if they were to be
-func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (bool, error) {
-	if dryRun {
-		log.Printf("dryrun: Uploading -> %s...", f.filepath)
-		return true, nil
-	}
-
-	contents, err := f.GetFileContents()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	filename, err := f.GetFilename()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Printf("Uploading %s...", filename)
-
-	gistFile := github.GistFile{Content: &contents, Filename: &filename}
-
-	filesMap := make(map[github.GistFilename]github.GistFile)
-
-	// Convert to GistFilename
-	gistFilename := github.GistFilename(filename)
-	filesMap[gistFilename] = gistFile
-	gistUpload := github.Gist{Files: filesMap}
-
-	gist, _, err := uploadClient.Gists.Create(ctx, &gistUpload)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	filesUploaded <- 1
-
-	log.Printf("Uploaded: %s (URL: %s) \n", filename, gist.GetHTMLURL())
-
-	return true, nil
-}
-
-// GetFileContents read a content from file
-func (f LocalFile) GetFileContents() (string, error) {
-	contents, err := ioutil.ReadFile(f.filepath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return string(contents), nil
-}
-
-// GetFilename get the basename of the file to upload
-func (f LocalFile) GetFilename() (string, error) {
-	stat, err := os.Stat(f.filepath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return stat.Name(), nil
-}
+// ByteSizes
+const (
+	_           = iota
+	KB ByteSize = 1 << (10 * iota)
+	MB
+	GB
+	TB
+	PB
+	EB
+	ZB
+	YB
+)
 
 var (
-	upload      bool
-	dryRun      bool
-	files       string
-	githubToken string
+	upload          bool
+	dryRun          bool
+	allowLargeFiles bool
+	files           string
+	githubToken     string
+	maxFilesize     = KB * 50
 
 	// Channel buffer for finished file uploads
 	filesUploaded chan int
@@ -104,6 +43,9 @@ var (
 func init() {
 	flag.BoolVar(&upload, "upload", false, "Upload files")
 	flag.BoolVar(&dryRun, "dryrun", false, "Print files that would have been uploaded")
+
+	largeFilesText := fmt.Sprintf("Override max upload size %2.fKB", maxFilesize/KB)
+	flag.BoolVar(&allowLargeFiles, "allow-large-files", false, largeFilesText)
 
 	flag.Parse()
 
@@ -141,13 +83,24 @@ func getFilesToUpload(files []string) ([]LocalFile, error) {
 	var filesToUpload []LocalFile
 
 	for _, file := range files {
-		localFile := LocalFile{file}
+		localFile := NewLocalFile(file)
 
+		// Check that the file exists
 		if _, err := localFile.Exists(); err != nil {
 			log.Printf("[WARNING] %s not found, excluding from upload", localFile.filepath)
-		} else {
-			filesToUpload = append(filesToUpload, localFile)
+			continue
 		}
+
+		// Check the file size to prevent large upload size
+		if !allowLargeFiles {
+			localFilesize := localFile.GetFilesize()
+			if localFilesize > maxFilesize {
+				log.Printf("[WARNING] excluding %s from upload. File exceeds %2.fKB: %2.f (%2.fKB)", localFile.filepath, maxFilesize/KB, localFilesize, localFilesize/KB)
+				continue
+			}
+		}
+
+		filesToUpload = append(filesToUpload, *localFile)
 	}
 
 	if len(filesToUpload) == 0 {
@@ -157,9 +110,16 @@ func getFilesToUpload(files []string) ([]LocalFile, error) {
 	return filesToUpload, nil
 }
 
-// Process files with, unless a dryrun
+// Process files handle uploading a files unless dry run is used
 func processFiles(ctx context.Context, uploadClient *github.Client, filesToProcess []LocalFile) {
 	for _, file := range filesToProcess {
+		// Don't spawn a thread if we are running in dryrun mode, just call it
+		// normally and bail out.
+		if dryRun {
+			file.Upload(ctx, uploadClient)
+			continue
+		}
+
 		go file.Upload(ctx, uploadClient)
 	}
 }
@@ -197,5 +157,8 @@ func main() {
 
 	processFiles(ctx, client, filesToUpload)
 
-	checkUploadsFinished(len(filesToUpload))
+	// Don't check uploads when dryrun is used
+	if !dryRun {
+		checkUploadsFinished(len(filesToUpload))
+	}
 }
