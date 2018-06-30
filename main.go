@@ -130,6 +130,12 @@ func main() {
 
 	processFiles(ctx, client, filesToUpload)
 
+	if dryRun {
+		return
+	}
+
+	// TODO: encapsulate this logic into a queue for files, so the user doesn't need
+	// to handle channels directly
 	uploadedFiles := 0
 	for err := range statusChan {
 		if err != nil {
