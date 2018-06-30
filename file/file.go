@@ -1,4 +1,4 @@
-package main
+package file
 
 import (
 	"context"
@@ -9,14 +9,42 @@ import (
 	"github.com/google/go-github/github"
 )
 
+// ByteSize wraps sizes
+type ByteSize float64
+
+// ByteSizes
+const (
+	_           = iota
+	KB ByteSize = 1 << (10 * iota)
+	MB
+	GB
+	TB
+	PB
+	EB
+	ZB
+	YB
+)
+
 // LocalFile wraps a filename
 type LocalFile struct {
-	filepath string
+	FilePath string
+	dryRun   bool
+
+	statusChan *chan error
+}
+
+// New creates a new local file
+func New(file string, dryRun bool, statusChan *chan error) *LocalFile {
+	return &LocalFile{
+		FilePath:   file,
+		dryRun:     dryRun,
+		statusChan: statusChan,
+	}
 }
 
 // Exists checks whether a file exists on the filesystem
 func (f LocalFile) Exists() (bool, error) {
-	_, err := os.Stat(f.filepath)
+	_, err := os.Stat(f.FilePath)
 
 	if err != nil {
 		return false, err
@@ -28,17 +56,17 @@ func (f LocalFile) Exists() (bool, error) {
 // Upload upload file to GitHub gist servers, unless doing a dryrun. If dryrun
 // is specified files are not uploaded but rather logged as if they were to be
 func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (bool, error) {
-	if dryRun {
-		log.Printf("dryrun: Uploading -> %s...", f.filepath)
+	if f.dryRun {
+		log.Printf("dryrun: Uploading -> %s...", f.FilePath)
 		return true, nil
 	}
 
-	contents, err := f.GetFileContents()
+	contents, err := f.Contents()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	filename, err := f.GetFilename()
+	filename, err := f.Name()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -57,19 +85,20 @@ func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (boo
 	gist, _, err := uploadClient.Gists.Create(ctx, &gistUpload)
 
 	if err != nil {
+		*f.statusChan <- err
 		log.Fatal(err)
 	}
 
-	filesUploaded <- 1
-
 	log.Printf("Uploaded: %s (URL: %s) \n", filename, gist.GetHTMLURL())
+
+	*f.statusChan <- nil
 
 	return true, nil
 }
 
-// GetFileContents read a content from file
-func (f LocalFile) GetFileContents() (string, error) {
-	contents, err := ioutil.ReadFile(f.filepath)
+// Contents read a content from file
+func (f LocalFile) Contents() (string, error) {
+	contents, err := ioutil.ReadFile(f.FilePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -77,9 +106,9 @@ func (f LocalFile) GetFileContents() (string, error) {
 	return string(contents), nil
 }
 
-// GetFilename get the basename of the file to upload
-func (f LocalFile) GetFilename() (string, error) {
-	stat, err := os.Stat(f.filepath)
+// Name get the basename of the file to upload
+func (f LocalFile) Name() (string, error) {
+	stat, err := os.Stat(f.FilePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -87,17 +116,12 @@ func (f LocalFile) GetFilename() (string, error) {
 	return stat.Name(), nil
 }
 
-// GetFilesize return filesize
-func (f LocalFile) GetFilesize() ByteSize {
-	stat, err := os.Stat(f.filepath)
+// Size return filesize
+func (f LocalFile) Size() ByteSize {
+	stat, err := os.Stat(f.FilePath)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	return ByteSize(stat.Size())
-}
-
-// NewLocalFile
-func NewLocalFile(file string) *LocalFile {
-	return &LocalFile{filepath: file}
 }
