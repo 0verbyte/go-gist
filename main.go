@@ -9,23 +9,8 @@ import (
 	"os"
 
 	"github.com/google/go-github/github"
+	"github.com/voidpirate/go-gist/file"
 	"golang.org/x/oauth2"
-)
-
-// ByteSize wraps sizes
-type ByteSize float64
-
-// ByteSizes
-const (
-	_           = iota
-	KB ByteSize = 1 << (10 * iota)
-	MB
-	GB
-	TB
-	PB
-	EB
-	ZB
-	YB
 )
 
 var (
@@ -34,17 +19,16 @@ var (
 	allowLargeFiles bool
 	files           string
 	githubToken     string
-	maxFilesize     = KB * 50
+	maxFilesize     = file.KB * 50
 
-	// Channel buffer for finished file uploads
-	filesUploaded chan int
+	statusChan chan error
 )
 
 func init() {
 	flag.BoolVar(&upload, "upload", false, "Upload files")
 	flag.BoolVar(&dryRun, "dryrun", false, "Print files that would have been uploaded")
 
-	largeFilesText := fmt.Sprintf("Override max upload size %2.fKB", maxFilesize/KB)
+	largeFilesText := fmt.Sprintf("Override max upload size %2.fKB", maxFilesize/file.KB)
 	flag.BoolVar(&allowLargeFiles, "allow-large-files", false, largeFilesText)
 
 	flag.Parse()
@@ -55,7 +39,7 @@ func init() {
 		log.Fatal(errText)
 	}
 
-	filesUploaded = make(chan int)
+	statusChan = make(chan error)
 }
 
 // Validate user passed arguments
@@ -79,23 +63,24 @@ func checkForArgumentErrors() {
 }
 
 // Parse files from filesystem and build files to upload
-func getFilesToUpload(files []string) ([]LocalFile, error) {
-	var filesToUpload []LocalFile
+func getFilesToUpload(files []string) ([]file.LocalFile, error) {
+	var filesToUpload []file.LocalFile
 
-	for _, file := range files {
-		localFile := NewLocalFile(file)
+	for _, f := range files {
+		localFile := file.New(f, dryRun, &statusChan)
 
 		// Check that the file exists
 		if _, err := localFile.Exists(); err != nil {
-			log.Printf("[WARNING] %s not found, excluding from upload", localFile.filepath)
+			log.Printf("[WARNING] %s not found, excluding from upload", localFile.FilePath)
 			continue
 		}
 
 		// Check the file size to prevent large upload size
 		if !allowLargeFiles {
-			localFilesize := localFile.GetFilesize()
+			localFilesize := localFile.Size()
 			if localFilesize > maxFilesize {
-				log.Printf("[WARNING] excluding %s from upload. File exceeds %2.fKB: %2.f (%2.fKB)", localFile.filepath, maxFilesize/KB, localFilesize, localFilesize/KB)
+				log.Printf("[WARNING] excluding %s from upload. File exceeds %2.fKB: %2.f (%2.fKB)",
+					localFile.FilePath, maxFilesize/file.KB, localFilesize, localFilesize/file.KB)
 				continue
 			}
 		}
@@ -111,28 +96,16 @@ func getFilesToUpload(files []string) ([]LocalFile, error) {
 }
 
 // Process files handle uploading a files unless dry run is used
-func processFiles(ctx context.Context, uploadClient *github.Client, filesToProcess []LocalFile) {
-	for _, file := range filesToProcess {
+func processFiles(ctx context.Context, uploadClient *github.Client, filesToProcess []file.LocalFile) {
+	for _, f := range filesToProcess {
 		// Don't spawn a thread if we are running in dryrun mode, just call it
 		// normally and bail out.
 		if dryRun {
-			file.Upload(ctx, uploadClient)
+			f.Upload(ctx, uploadClient)
 			continue
 		}
 
-		go file.Upload(ctx, uploadClient)
-	}
-}
-
-// Monitor file upload progress from goroutines
-func checkUploadsFinished(totalUploads int) {
-	uploadedFiles := 0
-	for {
-		if uploadedFiles < totalUploads {
-			uploadedFiles += <-filesUploaded
-		} else {
-			return
-		}
+		go f.Upload(ctx, uploadClient)
 	}
 }
 
@@ -157,8 +130,21 @@ func main() {
 
 	processFiles(ctx, client, filesToUpload)
 
-	// Don't check uploads when dryrun is used
-	if !dryRun {
-		checkUploadsFinished(len(filesToUpload))
+	if dryRun {
+		return
+	}
+
+	// TODO: encapsulate this logic into a queue for files, so the user doesn't need
+	// to handle channels directly
+	uploadedFiles := 0
+	for err := range statusChan {
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		uploadedFiles++
+		if uploadedFiles == len(filesToUpload) {
+			return
+		}
 	}
 }
