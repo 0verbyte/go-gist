@@ -20,8 +20,6 @@ var (
 	files           string
 	githubToken     string
 	maxFilesize     = file.KB * 50
-
-	statusChan chan error
 )
 
 func init() {
@@ -38,8 +36,6 @@ func init() {
 		errText := fmt.Sprintf("Environment variable required but missing: %s", "GITHUB_API_TOKEN")
 		log.Fatal(errText)
 	}
-
-	statusChan = make(chan error)
 }
 
 // Validate user passed arguments
@@ -67,7 +63,7 @@ func getFilesToUpload(files []string) ([]file.LocalFile, error) {
 	var filesToUpload []file.LocalFile
 
 	for _, f := range files {
-		localFile := file.New(f, dryRun, &statusChan)
+		localFile := file.New(f, dryRun)
 
 		// Check that the file exists
 		if _, err := localFile.Exists(); err != nil {
@@ -97,15 +93,46 @@ func getFilesToUpload(files []string) ([]file.LocalFile, error) {
 
 // Process files handle uploading a files unless dry run is used
 func processFiles(ctx context.Context, uploadClient *github.Client, filesToProcess []file.LocalFile) {
+	type fileStatus struct {
+		f   file.LocalFile
+		err error
+	}
+
+	ch := make(chan fileStatus, len(filesToProcess))
+	// When dryrun is used goroutines are not created, thus close the channel.
+	if dryRun {
+		close(ch)
+	}
+
 	for _, f := range filesToProcess {
-		// Don't spawn a thread if we are running in dryrun mode, just call it
-		// normally and bail out.
 		if dryRun {
 			f.Upload(ctx, uploadClient)
 			continue
 		}
 
-		go f.Upload(ctx, uploadClient)
+		go func(f file.LocalFile) {
+			err := f.Upload(ctx, uploadClient)
+			s := fileStatus{
+				f:   f,
+				err: err,
+			}
+
+			ch <- s
+		}(f)
+	}
+
+	for range filesToProcess {
+		fi := <-ch
+
+		if fi.err != nil {
+			fname, err := fi.f.Name()
+			if err != nil {
+				log.Printf("%v", err)
+				continue
+			}
+
+			log.Printf("[ERROR] uploading %s", fname)
+		}
 	}
 }
 
@@ -129,22 +156,4 @@ func main() {
 	client := github.NewClient(tc)
 
 	processFiles(ctx, client, filesToUpload)
-
-	if dryRun {
-		return
-	}
-
-	// TODO: encapsulate this logic into a queue for files, so the user doesn't need
-	// to handle channels directly
-	uploadedFiles := 0
-	for err := range statusChan {
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		uploadedFiles++
-		if uploadedFiles == len(filesToUpload) {
-			return
-		}
-	}
 }

@@ -29,16 +29,13 @@ const (
 type LocalFile struct {
 	FilePath string
 	dryRun   bool
-
-	statusChan *chan error
 }
 
 // New creates a new local file
-func New(file string, dryRun bool, statusChan *chan error) *LocalFile {
+func New(file string, dryRun bool) *LocalFile {
 	return &LocalFile{
-		FilePath:   file,
-		dryRun:     dryRun,
-		statusChan: statusChan,
+		FilePath: file,
+		dryRun:   dryRun,
 	}
 }
 
@@ -55,20 +52,20 @@ func (f LocalFile) Exists() (bool, error) {
 
 // Upload upload file to GitHub gist servers, unless doing a dryrun. If dryrun
 // is specified files are not uploaded but rather logged as if they were to be
-func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (bool, error) {
+func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) error {
 	if f.dryRun {
 		log.Printf("dryrun: Uploading -> %s...", f.FilePath)
-		return true, nil
+		return nil
 	}
 
 	contents, err := f.Contents()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	filename, err := f.Name()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	log.Printf("Uploading %s...", filename)
@@ -85,22 +82,18 @@ func (f LocalFile) Upload(ctx context.Context, uploadClient *github.Client) (boo
 	gist, _, err := uploadClient.Gists.Create(ctx, &gistUpload)
 
 	if err != nil {
-		*f.statusChan <- err
-		log.Fatal(err)
+		return err
 	}
 
 	log.Printf("Uploaded: %s (URL: %s) \n", filename, gist.GetHTMLURL())
-
-	*f.statusChan <- nil
-
-	return true, nil
+	return nil
 }
 
 // Contents read a content from file
 func (f LocalFile) Contents() (string, error) {
 	contents, err := ioutil.ReadFile(f.FilePath)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 
 	return string(contents), nil
@@ -110,7 +103,7 @@ func (f LocalFile) Contents() (string, error) {
 func (f LocalFile) Name() (string, error) {
 	stat, err := os.Stat(f.FilePath)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 
 	return stat.Name(), nil
