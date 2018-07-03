@@ -5,6 +5,7 @@ Upload local files directly to [GitHub Gist](https://gist.github.com/).
 
 ## Usage
 Create a [personal API token](https://github.com/settings/tokens) on GitHub. Save the generated token to an environment variable on your machine called `GITHUB_API_TOKEN`.
+>**Note:** go-gist requires "gist" scope to create gists.
 
 Once you've cloned this repo, build the go-gist binary `go build`.
 
