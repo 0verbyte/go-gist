@@ -13,6 +13,9 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// GitHubAPITokenEnv environment variable name
+const GitHubAPITokenEnv = "GITHUB_API_TOKEN"
+
 var (
 	upload          bool
 	dryRun          bool
@@ -31,7 +34,7 @@ func init() {
 
 	flag.Parse()
 
-	githubToken = os.Getenv("GITHUB_API_TOKEN")
+	githubToken = os.Getenv(GitHubAPITokenEnv)
 	if githubToken == "" {
 		errText := fmt.Sprintf("Environment variable required but missing: %s", "GITHUB_API_TOKEN")
 		log.Fatal(errText)
@@ -131,7 +134,7 @@ func processFiles(ctx context.Context, uploadClient *github.Client, filesToProce
 				continue
 			}
 
-			log.Printf("[ERROR] uploading %s", fname)
+			log.Printf("[ERROR] create gist failed (%s)", fname)
 		}
 	}
 }
